@@ -94,6 +94,18 @@
     pointer-events: none;
   }
   .colonia-label::before { display: none; }
+  .seccion-label {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #1c1e21;
+    font-size: 9px;
+    font-weight: 800;
+    text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 2px #fff;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .seccion-label::before { display: none; }
   .toggle-row { display:flex; align-items:center; gap:8px; font-size:13px; }
   .toggle-row input { width:auto; }
 </style>
@@ -160,6 +172,7 @@
     </fieldset>
 
     <div id="countInfo"></div>
+    <button id="downloadCsvBtn" style="width:100%;margin-top:8px;padding:8px 10px;border:none;border-radius:6px;background:var(--mc-orange);color:white;font-weight:600;font-size:13px;cursor:pointer;">Descargar CSV (secciones filtradas)</button>
 
     <fieldset style="margin-top:14px;">
       <legend>Simbología</legend>
@@ -179,7 +192,7 @@
         <input type="checkbox" id="fColonias" checked>
         <label for="fColonias" style="margin:0;">Mostrar límites de colonias</label>
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:6px;">Contorno naranja, sin relleno. Las etiquetas de nombre aparecen a partir de un zoom medio (nivel 14) para evitar saturar el mapa.</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;">Contorno naranja, sin relleno. Las etiquetas de colonia y el número de sección aparecen a partir de un zoom medio (nivel 14) para evitar saturar el mapa.</div>
     </fieldset>
   </div>
 
@@ -263,7 +276,18 @@ function onEachFeature(feature, layer) {
   layer.on('mouseover', function(){ this.setStyle({weight:2.5, color:'#222'}); });
   layer.on('mouseout', function(){ geoLayer.resetStyle(this); });
   layer.bindPopup(popupHtml(feature.properties));
+  layer.bindTooltip(String(feature.properties.seccion), {
+    permanent: true, direction: 'center', className: 'seccion-label', opacity: 1
+  });
   layerBySeccion[feature.properties.seccion] = layer;
+}
+
+function updateSeccionLabels() {
+  if (!geoLayer) return;
+  const show = map.getZoom() >= LABEL_ZOOM_THRESHOLD;
+  geoLayer.eachLayer(function(layer){
+    if (show) { layer.openTooltip(); } else { layer.closeTooltip(); }
+  });
 }
 
 function activePriorities() {
@@ -353,6 +377,7 @@ function renderAll() {
   layerBySeccion = {};
   geoLayer = L.geoJSON({type:'FeatureCollection', features: GEOJSON.features.filter(f => passesFilter(f.properties))},
     { style, onEachFeature }).addTo(map);
+  updateSeccionLabels();
   renderTable(filtered);
 }
 
@@ -363,6 +388,51 @@ document.querySelectorAll('thead th[data-k]').forEach(th => {
     renderTable(getFiltered());
   });
 });
+
+function csvEscape(val) {
+  if (val === null || val === undefined) return '';
+  const s = String(val);
+  if (/[",\n;]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function downloadCSV() {
+  const rows = getFiltered().slice().sort((a,b) => {
+    let cmp;
+    let va = a[sortKey], vb = b[sortKey];
+    if (typeof va === 'string') { va = va||''; vb = vb||''; cmp = va.localeCompare(vb); }
+    else { cmp = (va||0)-(vb||0); }
+    cmp = sortDir*cmp;
+    if (cmp !== 0) return cmp;
+    if (sortKey !== 'composite') return (b.composite||0) - (a.composite||0);
+    return 0;
+  });
+  const headers = ['Distrito','Seccion','Prioridad','Composite','Lista_Nominal','Pct_MC24','Pct_Participacion',
+    'Clasificacion_Historica','Nivel_Predominante','Poblacion_Total','Poblacion_25mas','Manzanas','N_Colonias','Colonias_Detalle'];
+  const lines = [headers.join(',')];
+  rows.forEach(r => {
+    const colDetalle = r.colonias.map(c => `${c.n} (${c.nivel}, ${c.pct}% mz)`).join(' ; ');
+    const line = [
+      r.distrito, r.seccion, r.prioridad, r.composite, r.ln, r.mc, r.part,
+      r.clas_hist, r.nivel_dom, r.pob1, r.pob22, r.manzanas, r.n_colonias, colDetalle
+    ].map(csvEscape).join(',');
+    lines.push(line);
+  });
+  const csvContent = '\ufeff' + lines.join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dSel = document.getElementById('fDistrito').value;
+  const suffix = dSel ? ('_D' + dSel) : '_D3yD8';
+  a.href = url;
+  a.download = 'secciones_prioridad' + suffix + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('downloadCsvBtn').addEventListener('click', downloadCSV);
 
 document.getElementById('fDistrito').addEventListener('change', renderAll);
 document.getElementById('fNivel').addEventListener('change', renderAll);
@@ -404,6 +474,7 @@ document.getElementById('fColonias').addEventListener('change', function(){
 });
 
 map.on('zoomend', updateColoniaLabels);
+map.on('zoomend', updateSeccionLabels);
 buildColoniaLayer();
 </script>
 </body>
